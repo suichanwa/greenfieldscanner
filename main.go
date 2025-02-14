@@ -29,6 +29,7 @@ func (a *App) Initialize(dbName string) {
 		authGroup.POST("/upload", a.UploadFile)
 		authGroup.GET("/files", a.ListFiles)
 		authGroup.POST("/sync", a.Sync)
+		authGroup.GET("/files/:id/download", a.DownloadFile)
 	}
 
 	var err error
