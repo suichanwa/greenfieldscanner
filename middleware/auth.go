@@ -9,7 +9,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func (a *App) JWTAuthMiddleware() gin.HandlerFunc {
+// Change from method to package function
+func JWTAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenString := c.GetHeader("Authorization")
 		if tokenString == "" {
@@ -28,7 +29,7 @@ func (a *App) JWTAuthMiddleware() gin.HandlerFunc {
 		}
 
 		claims := token.Claims.(jwt.MapClaims)
-		c.Set("userID", claims["user_id"])
+		c.Set("userID", uint(claims["user_id"].(float64)))
 		c.Next()
 	}
 }
