@@ -2,6 +2,7 @@ package main
 
 import (
 	"cloud-storage/desktop/api"
+	"cloud-storage/desktop/ui"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -13,11 +14,10 @@ import (
 type CloudApp struct {
 	client *api.Client
 	window fyne.Window
-	files  *widget.List
 }
 
 func main() {
-	a := app.New()
+	a := app.NewWithID("com.suiseika.cloudstorage")
 	window := a.NewWindow("Cloud Storage")
 
 	client := api.NewClient("http://localhost:8080")
@@ -26,37 +26,18 @@ func main() {
 		window: window,
 	}
 
-	cloudApp.showLogin()
+	// Use the login form from the UI package
+	window.SetContent(ui.ShowLoginForm(window, func(username, password string) {
+		err := cloudApp.client.Login(username, password)
+		if err != nil {
+			dialog.ShowError(err, window)
+			return
+		}
+		cloudApp.showMainView()
+	}))
+
 	window.Resize(fyne.NewSize(800, 600))
 	window.ShowAndRun()
-}
-
-func (a *CloudApp) showLogin() {
-	username := widget.NewEntry()
-	username.SetPlaceHolder("Username")
-
-	password := widget.NewPasswordEntry()
-	password.SetPlaceHolder("Password")
-
-	form := &widget.Form{
-		Items: []*widget.FormItem{
-			{Text: "Username", Widget: username},
-			{Text: "Password", Widget: password},
-		},
-		OnSubmit: func() {
-			err := a.client.Login(username.Text, password.Text)
-			if err != nil {
-				dialog.ShowError(err, a.window)
-				return
-			}
-			a.showMainView()
-		},
-	}
-
-	a.window.SetContent(container.NewVBox(
-		widget.NewLabel("Cloud Storage Login"),
-		form,
-	))
 }
 
 func (a *CloudApp) showMainView() {
@@ -69,6 +50,7 @@ func (a *CloudApp) showMainView() {
 			if reader == nil {
 				return
 			}
+			defer reader.Close()
 
 			err = a.client.UploadFile(reader.URI().Path())
 			if err != nil {
@@ -81,8 +63,30 @@ func (a *CloudApp) showMainView() {
 		fd.Show()
 	})
 
-	a.window.SetContent(container.NewVBox(
+	showFilesBtn := widget.NewButton("Show Files", func() {
+		fileListUI := ui.ShowFileList(a.client, a.window)
+		a.window.SetContent(fileListUI)
+	})
+
+	showSyncBtn := widget.NewButton("Sync Files", func() {
+		syncUI := ui.ShowSyncScreen(a.client, a.window)
+		a.window.SetContent(
+			container.NewVBox(
+				widget.NewLabel("Sync Files"),
+				syncUI,
+				widget.NewButton("Back", func() {
+					a.showMainView()
+				}),
+			),
+		)
+	})
+
+	mainContainer := container.NewVBox(
 		widget.NewLabel("Cloud Storage"),
 		uploadBtn,
-	))
+		showFilesBtn,
+		showSyncBtn,
+	)
+
+	a.window.SetContent(mainContainer)
 }

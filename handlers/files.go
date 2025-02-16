@@ -1,4 +1,3 @@
-// handlers/files.go
 package handlers
 
 import (
@@ -33,22 +32,44 @@ func (a *App) UploadFile(c *gin.Context) {
 		return
 	}
 
-	// Save the file
-	filePath := filepath.Join(userDir, header.Filename)
-	if err := c.SaveUploadedFile(header, filePath); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
-		return
-	}
-
-	// Calculate file hash
+	// Calculate file hash before saving
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to calculate file hash"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to calculate hash"})
 		return
 	}
 	fileHash := hex.EncodeToString(hash.Sum(nil))
 
-	// Save file metadata to database
+	// Reset file pointer
+	file.Seek(0, 0)
+
+	// Check if file already exists
+	var existingFile models.File
+	if err := a.DB.Where("user_id = ? AND hash = ?", userID, fileHash).First(&existingFile).Error; err == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "File already exists",
+			"file":    existingFile,
+		})
+		return
+	}
+
+	// Save file with hash as filename
+	filename := fmt.Sprintf("%s%s", fileHash, filepath.Ext(header.Filename))
+	filePath := filepath.Join(userDir, filename)
+
+	outFile, err := os.Create(filePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create file"})
+		return
+	}
+	defer outFile.Close()
+
+	if _, err := io.Copy(outFile, file); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
+		return
+	}
+
+	// Save file metadata
 	fileRecord := models.File{
 		UserID:       userID,
 		Name:         header.Filename,
@@ -57,19 +78,24 @@ func (a *App) UploadFile(c *gin.Context) {
 		Hash:         fileHash,
 		LastModified: time.Now(),
 	}
+
 	if err := a.DB.Create(&fileRecord).Error; err != nil {
+		os.Remove(filePath) // Cleanup on DB error
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file metadata"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "File uploaded successfully"})
+	c.JSON(http.StatusOK, gin.H{
+		"message": "File uploaded successfully",
+		"file":    fileRecord,
+	})
 }
 
 func (a *App) ListFiles(c *gin.Context) {
 	userID := c.MustGet("userID").(uint)
 
 	var files []models.File
-	if err := a.DB.Where("user_id = ?", userID).Find(&files).Error; err != nil {
+	if err := a.DB.Where("user_id = ?", userID).Order("created_at desc").Find(&files).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch files"})
 		return
 	}
@@ -90,47 +116,27 @@ func (a *App) DownloadFile(c *gin.Context) {
 	c.File(file.Path)
 }
 
-func (a *App) Sync(c *gin.Context) {
-	type SyncRequest struct {
-		Files []struct {
-			Name         string    `json:"name"`
-			Hash         string    `json:"hash"`
-			LastModified time.Time `json:"last_modified"`
-		} `json:"files"`
-	}
+func (a *App) DeleteFile(c *gin.Context) {
+	userID := c.MustGet("userID").(uint)
+	fileID := c.Param("id")
 
-	var req SyncRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+	var file models.File
+	if err := a.DB.Where("id = ? AND user_id = ?", fileID, userID).First(&file).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "File not found"})
 		return
 	}
 
-	userID := c.MustGet("userID").(uint)
-
-	var changes struct {
-		ToUpload   []string      `json:"to_upload"`
-		ToDownload []models.File `json:"to_download"`
+	// Delete the actual file
+	if err := os.Remove(file.Path); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete file"})
+		return
 	}
 
-	// Check each client file against server
-	for _, clientFile := range req.Files {
-		var serverFile models.File
-		err := a.DB.Where("user_id = ? AND name = ?", userID, clientFile.Name).First(&serverFile).Error
-
-		if err != nil {
-			// File doesn't exist on server
-			changes.ToUpload = append(changes.ToUpload, clientFile.Name)
-			continue
-		}
-
-		if serverFile.Hash != clientFile.Hash {
-			if serverFile.LastModified.After(clientFile.LastModified) {
-				changes.ToDownload = append(changes.ToDownload, serverFile)
-			} else {
-				changes.ToUpload = append(changes.ToUpload, clientFile.Name)
-			}
-		}
+	// Delete the database record
+	if err := a.DB.Delete(&file).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete record"})
+		return
 	}
 
-	c.JSON(http.StatusOK, changes)
+	c.JSON(http.StatusOK, gin.H{"message": "File deleted successfully"})
 }

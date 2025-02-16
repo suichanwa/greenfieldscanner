@@ -25,6 +25,7 @@ type FileInfo struct {
 	Name         string `json:"name"`
 	Size         int64  `json:"size"`
 	LastModified string `json:"last_modified"`
+	Hash         string `json:"hash"`
 }
 
 func NewClient(baseURL string) *Client {
@@ -120,4 +121,53 @@ func (c *Client) UploadFile(filePath string) error {
 	}
 
 	return nil
+}
+
+func (c *Client) ListFiles() ([]FileInfo, error) {
+	var resp struct {
+		Files []FileInfo `json:"files"`
+	}
+	err := c.sendRequest("GET", "/api/v1/files", nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Files, nil
+}
+
+func (c *Client) Sync() error {
+	var resp map[string]interface{}
+	return c.sendRequest("POST", "/api/v1/sync", nil, &resp)
+}
+
+// In desktop/api/client.go
+
+func (c *Client) DownloadFile(fileID string, fileName string) error {
+	req, err := http.NewRequest("GET", c.BaseURL+"/api/v1/files/"+fileID+"/download", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download failed: %d", resp.StatusCode)
+	}
+
+	outFile, err := os.Create(fileName)
+	if err != nil {
+		return err
+	}
+	defer outFile.Close()
+
+	_, err = io.Copy(outFile, resp.Body)
+	return err
+}
+
+func (c *Client) DeleteFile(fileID string) error {
+	return c.sendRequest("DELETE", "/api/v1/files/"+fileID, nil, nil)
 }

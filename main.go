@@ -51,6 +51,7 @@ func (a *App) Initialize(dbName string) {
 		authGroup.GET("/files", a.ListFiles)
 		authGroup.POST("/sync", a.Sync)
 		authGroup.GET("/files/:id/download", a.DownloadFile)
+		authGroup.DELETE("/files/:id", a.DeleteFile)
 	}
 }
 
